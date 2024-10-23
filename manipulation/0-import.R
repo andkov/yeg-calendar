@@ -180,20 +180,190 @@ ds2 <-
       ,(month=="Dec") & (day %in% c(24:31)) ~ TRUE
       ,TRUE ~ FALSE
     )
+    ,week_num = lubridate::isoweek(date)
+    ,daily_light_minutes = difftime(sunset,sunrise,units = "min") %>% as.numeric()
+    ,daily_light_gain = daily_light_minutes- lag(daily_light_minutes) %>% as.numeric()
   )
 ds2
+ds2 %>% glimpse()
+ds2 %>% select()
 
-#+ table-1 -----------------------------------------------------------------
 
+#+ daily-values -----------------------------------------------------------------
+# d1 <- 
+#   ds2 %>% 
+#   pivot_longer(c("daily_light_minutes", "daily_light_gain"),names_to = "measure",values_to = "value") 
+# d1 %>% glimpse()
+ds2 %>% glimpse()
+gbase <-
+  ds2 %>% 
+  filter(date > as.Date("2024-12-15")) %>%
+  filter(date > as.Date("2025-12-31")) %>%
+  # filter(year == 2025) %>% 
+  ggplot(aes(x=date, y = daily_light_minutes %>% as.numeric()))+
+  geom_line()+
+  scale_x_date(
+    date_breaks = "2 weeks",          # Breaks every month
+    date_labels = "%d\n%b"             # Display as abbreviated month and year (e.g., Jan 2025)
+  )+
+  geom_text(
+    aes(label = event_sun %>% str_replace(" ", "\n"), y = Inf)
+    ,vjust=-.2
+    ,lineheight = .7
+  )+
+  scale_y_continuous(expand = expansion(mult = c(.05,0.05)))+
+  labs(
+    title = "Duration of light day in YEG"
+    ,x = "Monday"
+    ,y = "Minutes"
+  )
+gbase
+g1 <- gbase %+%
+  geom_line(linewidth=1,color="blue") +
+  geom_vline(aes(xintercept=date),data=ds2 %>% filter(!is.na(event_sun)))+
+  geom_hline(aes(yintercept=720))+
+  geom_text(aes(label = "Day = Night", x = as.Date("2025-01-15"), y = 740),
+            data = . %>% slice(1))+
+  coord_cartesian(clip = "off") 
+g1
+g2 <- gbase %+%
+  aes(y=daily_light_gain) %+% 
+  geom_line(color="red", linewidth=1) +
+  geom_vline(aes(xintercept=date),data=ds2 %>% filter(!is.na(event_sun)))+
+  geom_hline(aes(yintercept=0))+
+  labs(
+    title = "Change in light day duration since last week"
+    ,y = "Minutes"
+  )
+g2
 
+library(patchwork)
+g_weekly <- g1/g2
+prints_folder <- "./manipulation/"
+g_weekly %>% quick_save("daily",w=16,h=9)
 #+ graph-1 -----------------------------------------------------------------
+
 d1 <- 
   ds2 %>% 
-  filter(
-    
+  # filter(year == 2025) %>% 
+  # filter(date > as.Date("2024-12-01")) %>%
+  group_by(year, week_num) %>% 
+  summarize(
+    mean_duration = daily_light_minutes %>% as.numeric() %>%  mean() 
+    ,min_duration = daily_light_minutes %>% as.numeric() %>% min() # on Monday
+    ,week_of = date %>% min() # 
+    ,.groups = "drop"
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    # light_gain = mean_duration- lag(mean_duration)
+    light_gain = min_duration- lag(min_duration)
+  ) 
+d1 %>% glimpse()
+
+gbase <-
+  d1 %>% 
+  filter(week_of > as.Date("2024-12-15")) %>% 
+  ggplot(aes(x=week_of, y = min_duration))+
+  geom_line()+
+  scale_x_date(
+    date_breaks = "2 weeks",          # Breaks every month
+    date_labels = "%d\n%b"             # Display as abbreviated month and year (e.g., Jan 2025)
+  )+
+  labs(
+    title = "Duration of light day in YEG"
+    ,x = "The week of Monday, ..."
+    ,y = "Minutes"
   )
+gbase
+g1 <- gbase %+%
+  geom_line(linewidth=1,color="blue") +
+  geom_vline(aes(xintercept=date),data=ds2 %>% filter(!is.na(event_sun)))+
+  geom_hline(aes(yintercept=720))+
+  geom_text(aes(label = "Day = Night", x = as.Date("2025-01-15"), y = 740),
+            data = . %>% slice(1))+
+  annotate("text", label = "Equinox", x = as.Date("2025-03-17"), y = 960, hjust = -0.1) +
+  coord_cartesian(clip = "off")   # This allows annotations to be outside the plot area
+g1
+g2 <- gbase %+%
+  aes(y=light_gain) %+% 
+  geom_line(color="red", linewidth=1) +
+  geom_vline(aes(xintercept=date),data=ds2 %>% filter(!is.na(event_sun)))+
+  geom_hline(aes(yintercept=0))+
+  labs(
+    title = "Change in light day duration since last week"
+    ,y = "Minutes"
+  )
+g2
 
+library(patchwork)
+g_weekly <- g1/g2
+prints_folder <- "./manipulation/"
+g_weekly %>% quick_save("weekly",w=12,h=8)
+#+ graph-2 -----------------------------------------------------------------
 
+d1 <- 
+  ds2 %>% 
+  # filter(year == 2025) %>% 
+  # filter(date > as.Date("2024-12-01")) %>%
+  group_by(year, week_num) %>% 
+  summarize(
+    mean_duration = daily_light_minutes %>% as.numeric() %>%  mean() 
+    ,min_duration = daily_light_minutes %>% as.numeric() %>% min() # on Monday
+    ,week_of = date %>% min() # 
+    ,.groups = "drop"
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    # light_gain = mean_duration- lag(mean_duration)
+    light_gain = min_duration- lag(min_duration)
+  ) 
+d1 %>% glimpse()
+
+gbase <-
+  d1 %>% 
+  filter(week_of > as.Date("2024-06-15")) %>% 
+  filter(week_of < as.Date("2025-06-27")) %>% 
+  ggplot(aes(x=week_of, y = min_duration))+
+  geom_line()+ 
+  scale_x_date(
+    date_breaks = "2 weeks",          # Breaks every month
+    date_labels = "%d\n%b"             # Display as abbreviated month and year (e.g., Jan 2025)
+  )+
+  labs(
+    title = "Duration of light day in YEG"
+    ,x = "The week of Monday, ..."
+    ,y = "Minutes"
+  )
+gbase
+g1 <- gbase %+%
+  geom_line(linewidth=1,color="blue") +
+  geom_vline(aes(xintercept=date),data=ds2 %>% filter(!is.na(event_sun)))+
+  geom_hline(aes(yintercept=720))+
+  geom_text(aes(label = "Day = Night", x = as.Date("2024-06-23"), y = 735),
+            data = . %>% slice(1), hjust = -0)+
+  scale_y_continuous(expand = expansion(mult = c(.05,0.05)))+
+  annotate("text", label = "Equinox", x = as.Date("2024-09-22"),  y = 920, hjust = .5, vjust=-2) +
+  annotate("text", label = "Equinox", x = as.Date("2025-03-20"),  y = 920, hjust = .5, vjust=-2) +
+  annotate("text", label = "Solstice", x = as.Date("2024-12-22"), y = 920, hjust = .5, vjust=-2) +
+  annotate("text", label = "Solstice", x = as.Date("2025-06-22"), y = 920, hjust = .5, vjust=-2) +
+  coord_cartesian(clip = "off")   # This allows annotations to be outside the plot are3
+g1
+g2 <- gbase %+%
+  aes(y=light_gain) %+% 
+  geom_line(color="red", linewidth=1) +
+  geom_vline(aes(xintercept=date),data=ds2 %>% filter(!is.na(event_sun)))+
+  geom_hline(aes(yintercept=0))+
+  labs(
+    title = "Speed of Time - Change in light day duration since last week"
+    ,y = "Minutes"
+  )
+g2
+
+library(patchwork)
+g_weekly <- g1/g2
+prints_folder <- "./manipulation/"
+g_weekly %>% quick_save("weekly2",w=12,h=8)
 #+ graph-2 -----------------------------------------------------------------
 
 #+ save-to-disk ------------------------------------------------------------
