@@ -18,6 +18,8 @@ library(dplyr)     # loading dplyr explicitly is my guilty pleasure
 library(broom)     # for model
 library(emmeans)   # for interpreting model results
 library(magrittr)
+library(tidyr)
+library(purrr)
 # -- 2.Import only certain functions of a package into the search path.
 import::from("magrittr", "%>%")
 # -- 3. Verify these packages are available on the machine, but their functions need to be qualified: http://r-pkgs.had.co.nz/namespace.html#search-path
@@ -33,7 +35,7 @@ base::source("./scripts/common-functions.R") # project-level
 
 # ---- declare-globals ---------------------------------------------------------
 # printed figures will go here:
-prints_folder <- paste0("./analysis/report-example/prints/")
+prints_folder <- paste0("./analysis/2025-calendar/prints/")
 if(!file.exists(prints_folder)){dir.create(file.path(prints_folder))}
 
 # ---- declare-functions -------------------------------------------------------
@@ -70,16 +72,9 @@ events_lunar_raw <-  read_csv("data-public/raw/events-lunar.csv", skip = 1 )
 # ---- inspect-data-local -----------------------------------------------------
 # this chunk is not sourced by the annotation layer, use a scratch pad
 
-# ---- tweak-data-0 ------------------------------------------------------------
-ds0 <- 
-  yeg_solar_calendar %>% 
-  janitor::clean_names() %>% 
-  mutate(
-    date = str_c(year, date, sep = " "),     # Combine 'year' and 'date' into a single string
-    date = parse_date_time(date, orders = "Y b d")  # Parse the date into "YYYY-MM-DD" format
-  )
-rm(yeg_solar_calendar)
-ds0 %>% glimpse()
+
+
+# ---- tweak-data-raw ------------------------------------------------------------
 
 events_solar <-
   events_solar_raw %>% 
@@ -94,10 +89,10 @@ events_solar <-
   ) %>%
   mutate(
     season = case_match(season,
-      "march" ~ "spring"
-      ,"september" ~ "fall"
-      ,"december" ~ "winter"
-      ,"june" ~ "summer"
+                        "march" ~ "spring"
+                        ,"september" ~ "fall"
+                        ,"december" ~ "winter"
+                        ,"june" ~ "summer"
     )
   ) %>% 
   select(-name) %>% 
@@ -105,7 +100,7 @@ events_solar <-
     id_cols = c("year","season","event")
     ,names_from = "measure"
     ,values_from = "value"
-
+    
   ) %>% 
   rename(
     day = date
@@ -135,22 +130,161 @@ events_solar %>% glimpse()
 # a shift through 2:00 am on that morning will be working one hour less than their
 # normal shift, no adjustment in pay shall be effected for this period. 
 
+events_civic <-
+  events_civic_raw 
 
+events_lunar <-
+  events_lunar_raw
+
+# ---- tweak-data-0 ------------------------------------------------------------
+ds0 <- 
+  yeg_solar_calendar %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    date = str_c(year, date, sep = " "),     # Combine 'year' and 'date' into a single string
+    date = parse_date_time(date, orders = "Y b d")  # Parse the date into "YYYY-MM-DD" format
+  ) %>% 
+  arrange(date) 
+# rm(yeg_solar_calendar)
+ds0 %>% glimpse()
+
+rm(
+  events_civic_raw
+  , events_lunar_raw
+  , events_solar_raw
+  , yeg_solar_calendar
+  , ls_object
+)
 
 # ---- tweak-data-1 ------------------------------------------------------------
 
+
+
+ds1 <-
+  ds0 %>% 
+  left_join(
+    events_solar %>% 
+      mutate(solar_event = paste0(season," ",event)) %>% 
+      select(date, season, solar_event)
+                              
+    ,by = "date"
+  ) %>%
+  left_join(
+    events_civic %>% 
+      pivot_longer(
+        cols = starts_with("date_")
+        ,values_to = "date"
+      ) %>% 
+      select(date, event_civic)
+      
+  ) %>% 
+  left_join(
+    events_lunar %>% 
+      pivot_longer(
+        cols = starts_with("date_")
+        ,values_to = "date"
+      ) %>% 
+      select(date, event_lunar)
+  ) %>% 
+  mutate(
+    wday = lubridate::wday(date,week_start = 1,abbr = F, label = TRUE)
+    ,month = lubridate::month(date, label = T, abbr = F)
+  ) %>% 
+  group_by(year) %>% 
+  tidyr::fill(season) %>% 
+  ungroup() %>% 
+  mutate(
+    season = case_when(
+      is.na(season)~ "winter"
+      ,TRUE ~ season)
+  ) 
+# ds1 %>% filter(date>as.Date("2024-12-18")) 
+# ds1 %>% filter(date>as.Date("2024-06-25")) %>% glimpse()
+# ds1  %>% filter(date>as.Date("2024-03-18")) %>% select(date,season, day_solar_season_num,solar_event)
+# ds1 %>% group_by(year, season) %>% summarize(day_count = n_distinct(day_solar_season_num))
+
+# ds1 %>% distinct(year,solar_event)
+# ds1 %>% select(date, wday, wday_month_num)
+ds1 %>% glimpse()
+
+
+rm(events_civic_raw, events_lunar_raw, events_solar_raw, yeg_solar_calendar, ls_object)
+
 # ---- inspect-data-2 ----------------------------------------------------------
-ds2 %>% select(sex) %>% labelled::lookfor()
+
 # ---- table-1 -----------------------------------------------------------------
-ds2 %>% 
-  select(sex, employed) %>% 
-  tableone::CreateTableOne(data=.,strata = "sex")
 
 # ---- graph-1 -----------------------------------------------------------------
-ds2 %>% 
-  ggplot(aes(x=date,y = earnings, color=sex)) +
-  geom_point()
+# ds1 %>% filter(date>as.Date("2024-12-18")) %>% select(date, solar_event,day_solar_season_num)
 
+# Tile graph for the cabinets
+# Step 1: Create the data (d1)
+d1 <- 
+  expand.grid(week_num = 1:52,day_num = 1:7) %>%
+ as_tibble() %>% 
+ arrange(week_num, day_num) %>% 
+  mutate(
+     solar_day_num = row_number()
+    ,solar_season = case_when(
+      solar_day_num <= 91 ~ "winter"
+      ,solar_day_num <= 91*2 ~ "spring"
+      ,solar_day_num <= 91*3 ~ "summer"
+      ,solar_day_num <= 91*4 ~ "fall"
+    )
+  ) %>%
+  group_by(solar_season) %>% 
+  mutate(
+  solar_season_week_num = rep(1:13,7) %>% sort()
+  ) %>% 
+  ungroup()
+
+d1
+# solar year skeleton
+d2 <- tibble(
+  date = seq.Date(from = as.Date("2024-12-21"), to = as.Date("2025-12-20"), by = "day")
+) %>% 
+  mutate(
+    solar_day_num = row_number()
+  ) %>% 
+  left_join(
+    ds1 %>% 
+      select(date,month,wday,season, illumination_day, illumination_total, solar_event)
+  ) %>% 
+  mutate(
+    day = lubridate::mday(date)
+    ,date = as.Date(date)
+  )
+d2
+d3 <-
+  d1 %>% 
+  left_join(d2)
+d3
+# Step 2: Create the tile plot (g1)
+g1 <- 
+  d3 %>%
+  mutate(
+    solar_season = factor(solar_season, levels = c(
+      "winter","spring","summer","fall"
+    ))
+    ,solar_season_week_num = factor(solar_season_week_num,levels = 13:1)
+  ) %>% 
+  filter(solar_day_num <= 13*7*4) %>% 
+  ggplot(aes(y = solar_season_week_num, x = day_num, fill = illumination_day)) +
+  geom_tile(color = "white", linewidth = 2) +               # Add white borders for clarity
+  scale_fill_viridis_c(guide = "none") +      # Remove legend
+  coord_fixed() +                             # Keep tiles as squares
+  # facet_wrap("solar_season",ncol=4)+
+  facet_grid(.~solar_season)+
+  theme_void() +                              # Remove all axes and labels
+  theme(
+    panel.background = element_blank(),       # No background
+    plot.margin = margin(0,0,0,0),          # Minimal padding around plot
+    strip.text = element_text(size = 90)  
+    )
+
+# Display the plot
+g1
+g1 %>% quick_save("quarter1",w=(11*4),h=24)
 # ---- graph-2 -----------------------------------------------------------------
 ds2 %>% 
   ggplot(aes(x=employed,fill=sex)) +
