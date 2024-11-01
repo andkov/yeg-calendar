@@ -72,9 +72,17 @@ events_lunar_raw <-  read_csv("data-public/raw/events-lunar.csv", skip = 1 )
 # ---- inspect-data-local -----------------------------------------------------
 # this chunk is not sourced by the annotation layer, use a scratch pad
 
+# ---- tweak-data-0 ------------------------------------------------------------
+ds0 <- 
+  yeg_solar_calendar %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    date = str_c(year, date, sep = " "),     # Combine 'year' and 'date' into a single string
+    date = parse_date_time(date, orders = "Y b d")  # Parse the date into "YYYY-MM-DD" format
+  ) %>% 
+  arrange(date) 
 
-
-# ---- tweak-data-raw ------------------------------------------------------------
+ds0 %>% glimpse()
 
 events_solar <-
   events_solar_raw %>% 
@@ -89,18 +97,18 @@ events_solar <-
   ) %>%
   mutate(
     season = case_match(season,
-                        "march" ~ "spring"
-                        ,"september" ~ "fall"
-                        ,"december" ~ "winter"
-                        ,"june" ~ "summer"
-    )
+      "march" ~ "spring"
+      ,"september" ~ "fall"
+      ,"december" ~ "finter"
+      ,"june" ~ "summer"
+    ) 
   ) %>% 
   select(-name) %>% 
   pivot_wider(
     id_cols = c("year","season","event")
     ,names_from = "measure"
     ,values_from = "value"
-    
+
   ) %>% 
   rename(
     day = date
@@ -135,38 +143,14 @@ events_civic <-
 
 events_lunar <-
   events_lunar_raw
-
-# ---- tweak-data-0 ------------------------------------------------------------
-ds0 <- 
-  yeg_solar_calendar %>% 
-  janitor::clean_names() %>% 
-  mutate(
-    date = str_c(year, date, sep = " "),     # Combine 'year' and 'date' into a single string
-    date = parse_date_time(date, orders = "Y b d")  # Parse the date into "YYYY-MM-DD" format
-  ) %>% 
-  arrange(date) 
-# rm(yeg_solar_calendar)
-ds0 %>% glimpse()
-
-rm(
-  events_civic_raw
-  , events_lunar_raw
-  , events_solar_raw
-  , yeg_solar_calendar
-  , ls_object
-)
-
 # ---- tweak-data-1 ------------------------------------------------------------
-
-
-
 ds1 <-
   ds0 %>% 
   left_join(
     events_solar %>% 
-      mutate(solar_event = paste0(season," ",event)) %>% 
-      select(date, season, solar_event)
-                              
+      mutate(event_solar = paste0(season," ",event)) %>% 
+      select(date, season, event_solar)
+    
     ,by = "date"
   ) %>%
   left_join(
@@ -176,7 +160,7 @@ ds1 <-
         ,values_to = "date"
       ) %>% 
       select(date, event_civic)
-      
+    
   ) %>% 
   left_join(
     events_lunar %>% 
@@ -197,25 +181,167 @@ ds1 <-
     season = case_when(
       is.na(season)~ "winter"
       ,TRUE ~ season)
-  ) 
-# ds1 %>% filter(date>as.Date("2024-12-18")) 
-# ds1 %>% filter(date>as.Date("2024-06-25")) %>% glimpse()
-# ds1  %>% filter(date>as.Date("2024-03-18")) %>% select(date,season, day_solar_season_num,solar_event)
-# ds1 %>% group_by(year, season) %>% summarize(day_count = n_distinct(day_solar_season_num))
-
-# ds1 %>% distinct(year,solar_event)
-# ds1 %>% select(date, wday, wday_month_num)
-ds1 %>% glimpse()
-
-
+  )  
 rm(events_civic_raw, events_lunar_raw, events_solar_raw, yeg_solar_calendar, ls_object)
+ds1 %>% glimpse()
+# ---- tweak-data-2 ------------------------------------------------------------
+
+# solar year skeleton
+ds2a <- 
+  tibble(
+    date = seq.Date(
+      from = as.Date("2024-12-21")
+      , to = as.Date("2025-12-21")
+      , by = "day"
+    )
+  ) %>% 
+  mutate(
+    solar_day_num = row_number(),
+    solar_week_num = ceiling(solar_day_num / 7)
+  ) %>% 
+  left_join(
+    ds1 %>% 
+      select(
+        date, month, wday, season, 
+        event_civic, event_lunar, event_solar,
+        illumination_day, illumination_total,
+        everything()
+    )
+  ) %>% 
+  bind_rows(
+    tibble(
+      date = seq.Date(
+        from = as.Date("2024-12-14")
+        , to = as.Date("2024-12-20")
+        , by = "day"
+      ) 
+    ) %>% 
+        left_join(ds1 )
+  ) %>% 
+  arrange(date)
+ds2a %>% glimpse()
+
+ds2a %>%
+  select(date, illumination_total,
+       # weekly_light_dur,
+       # daily_light_gain, weekly_light_gain
+       )
+
+ds2b <-
+  ds2a %>% 
+  mutate(
+    day = lubridate::mday(date)
+    ,date = as.Date(date)
+    ,daily_light_gain = (illumination_total - lag(illumination_total))
+    ,weekly_light_gain = (illumination_total - lag(illumination_total,7))
+  ) %>% 
+  group_by(solar_week_num) %>% 
+  mutate(
+    # weekly_light_dur = min(illumination_total) 
+    solar_week_day_num = row_number()
+ ) %>% 
+  ungroup() %>% 
+  filter(
+    date > as.Date("2024-12-20")
+  )
+
+spline_fit_daily <- smooth.spline(x = as.numeric(ds2b$date), y = ds2b$daily_light_gain)
+spline_fit_weekly <- smooth.spline(x = as.numeric(ds2b$date), y = ds2b$weekly_light_gain)
+ds2 <-
+  ds2b %>% 
+  mutate(
+    daily_gain_smooth = predict(spline_fit_daily, as.numeric(date))$y  # Smoothing spline predictions
+    ,weekly_gain_smooth = predict(spline_fit_weekly, as.numeric(date))$y  # Smoothing spline predictions
+    
+  )
+
+ds2 %>% glimpse()
+ds2%>% 
+  select(date, solar_week_day_num, illumination_total,
+         # weekly_light_dur,
+         daily_light_gain, weekly_light_gain) %>% 
+  # View()
+  head(15)
+
+ds2 %>% glimpse()
+ds2 %>% select(1:6) %>% tail()
+
+solar_year_2025_starts_on <- 
+  ds2 %>% 
+  filter(event_solar == "winter solstice", year == "2024") %>% 
+  pull(wday) %>% as.character()
+
 
 # ---- inspect-data-2 ----------------------------------------------------------
 
+# ---- graph-1 -----------------------------------------------------------------
+
+gbase <-
+  ds2 %>% 
+  ggplot(aes(x=date))+
+  scale_x_date(
+    # limits = c(as.Date("2024-12-21"), NA),  # Start at Dec 21, 2024
+    date_breaks = "1 weeks",                # Breaks every two weeks
+    date_labels = "%d\n%b"                  # Display day and abbreviated month
+  ) +
+  geom_text(
+    aes(label = event_solar %>% str_replace(" ", "\n"), y = Inf)
+    ,vjust=-.2
+    ,lineheight = .7
+  )+
+  scale_y_continuous(
+    expand = expansion(mult = c(.05,0.05))
+    ,breaks = scales::pretty_breaks()
+  )+
+  labs(
+    title = "Duration of light day in YEG"
+    ,x = solar_year_2025_starts_on
+    ,y = "Hours"
+  )
+gbase
+
+g1 <- gbase +
+  geom_line(aes(y = illumination_total))+
+  geom_line(aes(y = illumination_day))+
+  geom_point(aes(y=illumination_total), data = . %>% filter(!is.na(event_solar)))
+g1
+
+g2 <- gbase %+%
+  # geom_line(aes(y=daily_light_gain*60), color = "red") %+% 
+  geom_line(aes(y=daily_gain_smooth*60), color = "red") %+% 
+  labs(
+    title = "Change in light day duration since last day"
+    ,y = "Minutes"
+  )
+g2
+g2 %>% quick_save("change-since-yesterday",w=14,h=6.5)
+g3 <- gbase +
+  geom_line(
+    aes(y=weekly_gain_smooth*60, color = season)
+    , linewidth=4, alpha = .7
+    , data = . %>% filter(date < as.Date("2025-12-20"))
+  ) +
+  geom_line(
+    aes(y=weekly_light_gain*60)
+    , color = "black",linewidth=.5, alpha = .5
+  ) +
+  geom_point(
+    aes(y=weekly_gain_smooth*60)
+    ,shape = 16, alpha = .6, size = 5
+    , data = . %>% filter(!is.na(event_solar))
+  )+
+  labs(
+    title = "Change in light day duration since last week"
+    ,y = "Minutes"
+  )
+g3
+# g3 %>% quick_save("week change each week", w =16, h=6)
+g3 %>% quick_save("change-since-last-week", w =14, h=6.5)
+ds2 %>% glimpse()
 # ---- table-1 -----------------------------------------------------------------
 
 # ---- graph-1 -----------------------------------------------------------------
-# ds1 %>% filter(date>as.Date("2024-12-18")) %>% select(date, solar_event,day_solar_season_num)
+# ds1 %>% filter(date>as.Date("2024-12-18")) %>% select(date, event_solar,day_solar_season_num)
 
 # Tile graph for the cabinets
 # Step 1: Create the data (d1)
@@ -226,10 +352,10 @@ d1 <-
   mutate(
      solar_day_num = row_number()
     ,solar_season = case_when(
-      solar_day_num <= 91 ~ "winter"
-      ,solar_day_num <= 91*2 ~ "spring"
-      ,solar_day_num <= 91*3 ~ "summer"
-      ,solar_day_num <= 91*4 ~ "fall"
+      solar_day_num <= 91 ~ "Winter"
+      ,solar_day_num <= 91*2 ~ "Spring"
+      ,solar_day_num <= 91*3 ~ "Summer"
+      ,solar_day_num <= 91*4 ~ "Fall"
     )
   ) %>%
   group_by(solar_season) %>% 
@@ -248,7 +374,7 @@ d2 <- tibble(
   ) %>% 
   left_join(
     ds1 %>% 
-      select(date,month,wday,season, illumination_day, illumination_total, solar_event)
+      select(date,month,wday,season, illumination_day, illumination_total, event_solar)
   ) %>% 
   mutate(
     day = lubridate::mday(date)
@@ -264,7 +390,7 @@ g1 <-
   d3 %>%
   mutate(
     solar_season = factor(solar_season, levels = c(
-      "winter","spring","summer","fall"
+      "Winter","Spring","Summer","Fall"
     ))
     ,solar_season_week_num = factor(solar_season_week_num,levels = 13:1)
   ) %>% 
