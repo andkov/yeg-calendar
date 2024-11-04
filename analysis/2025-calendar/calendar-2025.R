@@ -185,7 +185,8 @@ ds1 <-
 rm(events_civic_raw, events_lunar_raw, events_solar_raw, yeg_solar_calendar, ls_object)
 ds1 %>% glimpse()
 # ---- tweak-data-2 ------------------------------------------------------------
-
+events_solar %>% filter(year %in% c("2024","2025"),
+                        season == "Winter",event == "solstice")
 # solar year skeleton
 ds2a <- 
   tibble(
@@ -199,7 +200,8 @@ ds2a <-
     solar_day_num = row_number(),
     solar_week_num = ceiling(solar_day_num / 7)
   ) %>% 
-  left_join(
+  # left_join(
+  full_join(
     ds1 %>% 
       select(
         date, month, wday, season, 
@@ -257,11 +259,17 @@ ds2 <-
 
 ds2 %>% glimpse()
 ds2%>% 
-  select(date, solar_week_day_num, illumination_total,
-         # weekly_light_dur,
-         daily_light_gain, weekly_light_gain) %>% 
+  select(date
+         # ,event_solar
+         ,season
+         , solar_week_day_num
+         # , illumination_total
+         # , daily_light_gain
+         # , weekly_light_gain
+        ) %>% 
   # View()
-  head(15)
+  tail(15)
+ds2$date %>% summary()
 
 ds2 %>% glimpse()
 ds2 %>% select(1:6) %>% tail()
@@ -278,6 +286,7 @@ solar_year_2025_starts_on <-
 
 gbase <-
   ds2 %>% 
+  filter(date > as.Date("2024-06-20")) %>% 
   ggplot(aes(x=date))+
   scale_x_date(
     # limits = c(as.Date("2024-12-21"), NA),  # Start at Dec 21, 2024
@@ -339,6 +348,105 @@ g3
 g3 %>% quick_save("change-since-last-week", w =14, h=6.5)
 ds2 %>% glimpse()
 # ---- table-1 -----------------------------------------------------------------
+
+t1 <-
+  ds2 %>%
+  filter(!is.na(solar_week_num)) %>% 
+  filter(solar_week_day_num==1L) %>% 
+  mutate(
+    week_direction = case_when(
+      solar_week_num <= 27 ~ "ascending"
+      ,solar_week_num > 27 ~ "descending"
+    )
+  )  # filter(solar_week_day_num==1L) %>% 
+  select(
+    date, solar_week_num, illumination_total, weekly_light_gain,
+    week_direction
+  )
+t2 <-
+  bind_rows(
+    t1
+    ,t1 %>% 
+      filter(solar_week_num == 27) %>% 
+      mutate(
+        week_direction = "descending"
+      )
+  ) %>% 
+  arrange(date)
+t2  %>% print_all()
+ds2 %>% glimpse()
+
+scale_factor <- .5
+g2 <-
+  t2 %>%
+  # filter(solar_week_num < 27) %>% 
+  ggplot(aes(x=1, y = illumination_total))+
+  # geom_line()+
+  geom_rect(aes(
+    xmin = .5, xmax = 1.5
+    , ymin = illumination_total, ymax = lead(illumination_total)
+    ,fill = illumination_total
+    )
+  )+
+  geom_hline(aes(yintercept = illumination_total), color = "white")+
+  # geom_point(aes(x=date, y = illumination_total))+
+  geom_point(
+    aes(
+      # x = if_else(week_direction == "ascending", as.Date("2025-06-01"), as.Date("2025-07-01"))  # Right-align in left facet, left-align in right facet
+      # x = if_else(week_direction == "ascending", as.Date(-Inf), as.Date(Inf))  # Right-align in left facet, left-align in right facet
+      # x = as.Date(Inf)
+    )
+    ,shape = 21, fill = "white", color = "white", size = 7
+    ,data = . %>% filter(!solar_week_num %in% c(27,1, 53))
+  ) +
+  geom_text(
+    aes(
+      label = solar_week_num,
+      # x = if_else(week_direction == "ascending", as.Date(-Inf), as.Date(Inf))   # Right-align in left facet, left-align in right facet
+      # x = as.Date(Inf)
+    )
+    ,data = . %>% filter(!solar_week_num %in% c(27,1, 53))
+  ) +
+  scale_y_continuous(
+    breaks = seq(1,20,1)
+    ,minor_breaks = seq(1,20,.25)
+    # ,limits = c(8.5, 19)
+    ,expand = expansion(add = c(0,-.0))
+    # ,minor_breaks = seq(1,20,1/)
+  ) +  
+  scale_x_continuous(
+    limits = c(.4, 1.6)
+  )+
+  # scale_x_date(
+  #   limits = c(min(t2$date), max(t2$date) + 15),  # Adds padding to the right
+  #   expand = expansion(mult = c(0, 0.1))  # Additional space on the right side
+  # ) +
+  # scale_fill_binned(type = "viridis")+
+  # scale_fill_binned(type = "gradient")+
+  scale_fill_viridis_c()+
+  coord_cartesian(clip = "off")+
+  facet_wrap(facets = "week_direction",nrow=1,scales = "free_x")+
+  # theme_void()
+  theme_minimal()+
+  labs(
+    y = "Hours of illumination"
+    ,x = ""
+  )+
+  theme(
+    axis.text.x = element_blank()
+    ,panel.grid.major.x = element_blank()
+    ,panel.grid.minor.x = element_blank()
+    ,legend.position = "none"
+    ,panel.grid.major.y = element_line(color = "black", size=4)
+    ,panel.grid.minor.y = element_line(color = "black", size=2)
+  )
+g2
+
+# Combine main plot and legend
+# final_plot <- plot_grid(main_plot, legend_plot, ncol = 1, rel_heights = c(1, 0.1))
+
+g2 %>% quick_save("solar_weeks",h=30*scale_factor,w=5*scale_factor)
+# g2 %>% quick_save("solar_weeks",h=30*scale_factor,w=11.75*scale_factor)
 
 # ---- graph-1 -----------------------------------------------------------------
 # ds1 %>% filter(date>as.Date("2024-12-18")) %>% select(date, event_solar,day_solar_season_num)
